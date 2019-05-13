@@ -37,16 +37,14 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
                 new FSMTransitionHandlerBuilder<RaftStateMachine.State>()
                         .state(FOLLOWER, CANDIDATE, this::election)
                         .state(CANDIDATE, CANDIDATE, this::election)
-                        .state(CANDIDATE, FOLLOWER, () -> {
-                            logger.info(getSelf().hashCode() + " has become a follower");
-                        })
+                        .state(CANDIDATE, FOLLOWER, () -> {})
                         .state(CANDIDATE, LEADER, () -> {
                             // FIXME? make sure timers work properly
                             logger.info(getSelf().hashCode() + " has become the leader");
                             cancelTimeout();
                         })
                         .state(LEADER, FOLLOWER, () -> {
-
+                            logger.info(getSelf().hashCode() + " is no longer the leader");
                         })
                         // TODO we can go to a follower if we discover our term is fxxd
                         .build()
@@ -78,7 +76,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
                         .event(TimeoutMessage.class, (timeoutMessage, data) -> {
                             resetTimeout();
-                            return goTo(CANDIDATE);
+                            return goTo(CANDIDATE); // FIXME goto follower?
                         })
                         .event(RequestVoteDto.class, (request, data) -> onRequestVoteDto(request)) // TODO maybe unhandle?
                         .event(VoteDto.class, (vote, data) -> onVoteDto(vote)) // TODO maybe unhandle?
@@ -96,7 +94,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
         // vote for self
         actorsDidntVoteYesSet = new HashSet<>(RaftActorManager.INSTANCE.getActors());
         actorsDidntVoteYesSet.remove(getSelf());
-        stateData().voted();
+        stateData().votedFor(getSelf());
 
         // Attempt to receive votes from majority of actors
         final RequestVoteDto requestVoteDto = new RequestVoteDto(stateData().getTerm());
@@ -114,15 +112,15 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
             stateData().newTerm(sendersTerm);
         }
 
-        // Only vote once per term.
-        if (stateData().hasVoted()) {
-            final VoteDto vote = new VoteDto(stateData().getTerm(), stateData().hasVoted());
-            getSender().tell(vote, getSelf());
-        } else {
-            stateData().voted();
-            final VoteDto vote = new VoteDto(stateData().getTerm(), stateData().hasVoted());
-            getSender().tell(vote, getSelf());
+        // Only vote yes once per term.
+        boolean vote = false;
+        if (stateData().votedFor() == null) {
+            stateData().votedFor(getSender());
+            vote = true;
         }
+
+        VoteDto voteDto = new VoteDto(stateData().getTerm(), vote);
+        getSender().tell(voteDto, getSelf());
 
         return stay();
     }
@@ -163,9 +161,5 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
     private void resetTimeout() {
         cancelTimeout();
         startTimeout();
-    }
-
-    private void startHeartbeat() {
-
     }
 }

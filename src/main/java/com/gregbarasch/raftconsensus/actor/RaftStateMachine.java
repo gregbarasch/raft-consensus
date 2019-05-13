@@ -1,5 +1,7 @@
 package com.gregbarasch.raftconsensus.actor;
 
+import akka.actor.ActorRef;
+
 class RaftStateMachine {
 
     private RaftStateMachine() {}
@@ -11,29 +13,29 @@ class RaftStateMachine {
     static class Data {
 
         private long term = 0;
-        private boolean voted = false;
+        private ActorRef votedFor = null;
 
         void nextTerm() {
             term++;
-            voted = false;
+            votedFor = null;
         }
 
         // Assumes that the term can only go forward. FIXME throw error?
         void newTerm(long term) {
             this.term = term;
-            voted = false;
+            votedFor = null;
         }
 
         long getTerm() {
             return term;
         }
 
-        void voted() {
-            voted = true;
+        void votedFor(ActorRef actor) {
+            votedFor = actor;
         }
 
-        boolean hasVoted() {
-            return voted;
+        ActorRef votedFor() {
+            return votedFor;
         }
     }
 }

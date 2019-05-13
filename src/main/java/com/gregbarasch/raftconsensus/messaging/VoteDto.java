@@ -2,7 +2,7 @@ package com.gregbarasch.raftconsensus.messaging;
 
 public class VoteDto extends RaftMessage {
 
-    private boolean vote;
+    private final boolean vote;
 
     public VoteDto(long term, boolean vote) {
         super(term);
