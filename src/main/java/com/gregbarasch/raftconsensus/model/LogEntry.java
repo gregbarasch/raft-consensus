@@ -1,21 +1,25 @@
-package com.gregbarasch.raftconsensus.messaging;
+package com.gregbarasch.raftconsensus.model;
 
-public class LogEntry extends RaftMessage {
+public class LogEntry {
 
     private final Object command;
     private final int index; // FIXME for some reason its supposed to start from 1? double check
+    private final long term;
 
     public LogEntry(Object command, int index, long term) {
-        super(term);
         this.command = command;
         this.index = index;
+        this.term = term;
+    }
+    public Object getCommand() {
+        return command;
     }
 
     public int getIndex() {
         return index;
     }
 
-    public Object getCommand() {
-        return command;
+    public long getTerm() {
+        return term;
     }
 }

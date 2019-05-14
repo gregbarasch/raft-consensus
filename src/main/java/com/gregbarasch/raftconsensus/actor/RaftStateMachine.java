@@ -12,6 +12,7 @@ class RaftStateMachine {
 
     static class Data {
 
+        // TODO put log here?
         private long term = 0;
         private ActorRef votedFor = null;
 

@@ -6,7 +6,6 @@ import akka.actor.Props;
 import akka.japi.pf.FSMStateFunctionBuilder;
 import akka.japi.pf.FSMTransitionHandlerBuilder;
 import com.gregbarasch.raftconsensus.messaging.RequestVoteDto;
-import com.gregbarasch.raftconsensus.messaging.TimeoutMessage;
 import com.gregbarasch.raftconsensus.messaging.VoteDto;
 import org.apache.log4j.Logger;
 
@@ -18,9 +17,13 @@ import java.util.Set;
 
 import static com.gregbarasch.raftconsensus.actor.RaftStateMachine.State.*;
 
-// FIXME
-// at what point do we increment term?
-// at what point do we set requestTimeout
+// TODO persist stuff to the disk
+
+
+// TODO followers only apply current term entries. only if suffix is compatible
+// TODO followers only refuse an update if therers an earlierr conflict : leader will send longer suffix next time
+// TODO followers overwrites tail of matching log with new suffix
+// TODO leader sends its last entrry, followers might reject if the suffix is bad and follower will respond with their good 1
 
 class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Data> {
     private static final Logger logger = Logger.getLogger(RaftActor.class);
@@ -52,7 +55,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
 
         when(FOLLOWER,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
-                        .event(TimeoutMessage.class, (timeout, data) -> {
+                        .event(Timeout.class, (timeout, data) -> {
                             resetTimeout();
                             return goTo(CANDIDATE);
                         })
@@ -63,7 +66,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
 
         when(CANDIDATE,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
-                        .event(TimeoutMessage.class, (timeoutMessage, data) -> {
+                        .event(Timeout.class, (timeoutMessage, data) -> {
                             resetTimeout();
                             return goTo(CANDIDATE);
                         })
@@ -74,7 +77,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
 
         when(LEADER,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
-                        .event(TimeoutMessage.class, (timeoutMessage, data) -> {
+                        .event(Timeout.class, (timeoutMessage, data) -> {
                             resetTimeout();
                             return goTo(CANDIDATE); // FIXME goto follower?
                         })
@@ -112,7 +115,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
             stateData().newTerm(sendersTerm);
         }
 
-        // Only vote yes once per term.
+        // Only vote yes once per term. // FIXME vote only granted to nodes with more up to date logs...
         boolean vote = false;
         if (stateData().votedFor() == null) {
             stateData().votedFor(getSender());
@@ -151,15 +154,19 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
         final int min = 150;
         final int max = 300;
         final long timeoutMillis = new Random().nextInt(max - min + 1) + min;
-        setTimer(TimeoutMessage.TIMEOUT.name(), TimeoutMessage.TIMEOUT, Duration.ofMillis(timeoutMillis));
+        setTimer(Timeout.INSTANCE.name(), Timeout.INSTANCE, Duration.ofMillis(timeoutMillis));
     }
 
     private void cancelTimeout() {
-        cancelTimer(TimeoutMessage.TIMEOUT.name());
+        cancelTimer(Timeout.INSTANCE.name());
     }
 
     private void resetTimeout() {
         cancelTimeout();
         startTimeout();
+    }
+
+    private enum Timeout {
+        INSTANCE
     }
 }
