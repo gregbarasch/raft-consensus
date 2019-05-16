@@ -5,8 +5,9 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.japi.pf.FSMStateFunctionBuilder;
 import akka.japi.pf.FSMTransitionHandlerBuilder;
-import com.gregbarasch.raftconsensus.messaging.RequestVoteDto;
-import com.gregbarasch.raftconsensus.messaging.VoteDto;
+import com.gregbarasch.raftconsensus.messaging.AppendEntriesRequestMessage;
+import com.gregbarasch.raftconsensus.messaging.VoteRequestDto;
+import com.gregbarasch.raftconsensus.messaging.VoteResponseDto;
 import org.apache.log4j.Logger;
 
 import java.time.Duration;
@@ -19,6 +20,10 @@ import static com.gregbarasch.raftconsensus.actor.RaftStateMachine.State.*;
 
 // TODO persist stuff to the disk
 
+/**
+After the entry is committed, the leader executes the entry and responds back with the result to the client.
+        It should be noted that these entries are executed in the order they are received.
+*/
 
 // TODO followers only apply current term entries. only if suffix is compatible
 // TODO followers only refuse an update if therers an earlierr conflict : leader will send longer suffix next time
@@ -36,31 +41,15 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
     }
 
     private RaftActor() {
-        onTransition(
-                new FSMTransitionHandlerBuilder<RaftStateMachine.State>()
-                        .state(FOLLOWER, CANDIDATE, this::election)
-                        .state(CANDIDATE, CANDIDATE, this::election)
-                        .state(CANDIDATE, FOLLOWER, () -> {})
-                        .state(CANDIDATE, LEADER, () -> {
-                            // FIXME? make sure timers work properly
-                            logger.info(getSelf().hashCode() + " has become the leader");
-                            cancelTimeout();
-                        })
-                        .state(LEADER, FOLLOWER, () -> {
-                            logger.info(getSelf().hashCode() + " is no longer the leader");
-                        })
-                        // TODO we can go to a follower if we discover our term is fxxd
-                        .build()
-        );
-
         when(FOLLOWER,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
                         .event(Timeout.class, (timeout, data) -> {
                             resetTimeout();
                             return goTo(CANDIDATE);
                         })
-                        .event(RequestVoteDto.class, (request, data) -> onRequestVoteDto(request))
-                        .event(VoteDto.class, (vote, data) -> onVoteDto(vote)) // TODO maybe dont handle
+                        .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request))
+                        .event(VoteResponseDto.class, (vote, data) -> onVoteDto(vote)) // TODO maybe dont handle
+                        .event(AppendEntriesRequestMessage.class, (message, data) -> stay()) // FIXME
                         .build()
         );
 
@@ -70,8 +59,8 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
                             resetTimeout();
                             return goTo(CANDIDATE);
                         })
-                        .event(RequestVoteDto.class, (request, data) -> onRequestVoteDto(request))
-                        .event(VoteDto.class, (vote, data) -> onVoteDto(vote))
+                        .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request))
+                        .event(VoteResponseDto.class, (vote, data) -> onVoteDto(vote))
                         .build()
         );
 
@@ -79,10 +68,27 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.Data>()
                         .event(Timeout.class, (timeoutMessage, data) -> {
                             resetTimeout();
-                            return goTo(CANDIDATE); // FIXME goto follower?
+                            return goTo(FOLLOWER); // FIXME do leadersr actually timeout?
                         })
-                        .event(RequestVoteDto.class, (request, data) -> onRequestVoteDto(request)) // TODO maybe unhandle?
-                        .event(VoteDto.class, (vote, data) -> onVoteDto(vote)) // TODO maybe unhandle?
+                        .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request)) // TODO maybe unhandle?
+                        .event(VoteResponseDto.class, (vote, data) -> onVoteDto(vote)) // TODO maybe unhandle?
+                        .build()
+        );
+
+        onTransition(
+                new FSMTransitionHandlerBuilder<RaftStateMachine.State>()
+                        .state(FOLLOWER, CANDIDATE, this::election)
+                        .state(CANDIDATE, CANDIDATE, this::election)
+                        .state(CANDIDATE, FOLLOWER, () -> {})
+                        .state(CANDIDATE, LEADER, () -> {
+                            // FIXME? make sure timers work properly
+                            logger.info(getSelf().hashCode() + " has become the leader");
+                            resetTimeout();
+                        })
+                        .state(LEADER, FOLLOWER, () -> {
+                            logger.info(getSelf().hashCode() + " is no longer the leader");
+                        })
+                        // TODO we can go to a follower if we discover our term is fxxd
                         .build()
         );
 
@@ -100,17 +106,17 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
         stateData().votedFor(getSelf());
 
         // Attempt to receive votes from majority of actors
-        final RequestVoteDto requestVoteDto = new RequestVoteDto(stateData().getTerm());
+        final VoteRequestDto voteRequestDto = new VoteRequestDto(stateData().getTerm());
         for (final ActorRef actor : new ArrayList<>(actorsDidntVoteYesSet)) {
-            actor.tell(requestVoteDto, getSelf()); // TODO request again
+            actor.tell(voteRequestDto, getSelf()); // TODO request again
         }
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.Data> onRequestVoteDto(RequestVoteDto requestVoteDto) {
+    private State<RaftStateMachine.State, RaftStateMachine.Data> onRequestVoteDto(VoteRequestDto voteRequestDto) {
         // FIXME leader will vote no??
 
         // sync up with senders term // FIXME fail to follower? but not if were already follower?
-        final long sendersTerm = requestVoteDto.getTerm();
+        final long sendersTerm = voteRequestDto.getTerm();
         if (sendersTerm > stateData().getTerm()) {
             stateData().newTerm(sendersTerm);
         }
@@ -122,23 +128,23 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Dat
             vote = true;
         }
 
-        VoteDto voteDto = new VoteDto(stateData().getTerm(), vote);
-        getSender().tell(voteDto, getSelf());
+        VoteResponseDto voteResponseDto = new VoteResponseDto(stateData().getTerm(), vote);
+        getSender().tell(voteResponseDto, getSelf());
 
         return stay();
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.Data> onVoteDto(VoteDto voteDto) {
+    private State<RaftStateMachine.State, RaftStateMachine.Data> onVoteDto(VoteResponseDto voteResponseDto) {
 
         // Fail to follower if we are out of sync
-        final long sendersTerm = voteDto.getTerm();
+        final long sendersTerm = voteResponseDto.getTerm();
         if (sendersTerm > stateData().getTerm()) {
             stateData().newTerm(sendersTerm);
             return goTo(FOLLOWER);
         }
 
         // Remove
-        if (voteDto.isYes()) {
+        if (voteResponseDto.isYes()) {
             actorsDidntVoteYesSet.remove(getSender());
         }
 

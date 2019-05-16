@@ -1,10 +1,10 @@
 package com.gregbarasch.raftconsensus.messaging;
 
-public class VoteDto extends RaftMessage {
+public class VoteResponseDto extends RaftMessage {
 
     private final boolean vote;
 
-    public VoteDto(long term, boolean vote) {
+    public VoteResponseDto(long term, boolean vote) {
         super(term);
         this.vote = vote;
     }
