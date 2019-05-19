@@ -5,9 +5,7 @@ import java.util.List;
 
 public class Log {
 
-    private List<LogEntry> log = new ArrayList<>();
-    private int commitIndex = 0;
-    private int lastApplied = 0;
+    private List<LogEntry> log = new ArrayList<>(); // FIXME why is the first index 1....
 
     public void appendEntries(List<LogEntry> logSuffix) {
         log.addAll(logSuffix);
@@ -23,21 +21,5 @@ public class Log {
         final int lastIndex = log.size() - 1;
         if (lastIndex < 0) return null;
         return log.get(lastIndex);
-    }
-
-    public int getCommitIndex() {
-        return commitIndex;
-    }
-
-    public void setCommitIndex(int commitIndex) {
-        this.commitIndex = commitIndex;
-    }
-
-    public int getLastApplied() {
-        return lastApplied;
-    }
-
-    public void setLastApplied(int lastApplied) {
-        this.lastApplied = lastApplied;
     }
 }

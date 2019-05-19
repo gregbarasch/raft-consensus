@@ -10,7 +10,8 @@ public class RaftStateMachine {
         FOLLOWER, CANDIDATE, LEADER
     }
 
-    public static class Data {
+    // Persistent data for all servers
+    public static class PersistentData {
 
         private long term = 0;
         private final Log log = new Log();
@@ -43,5 +44,9 @@ public class RaftStateMachine {
         public ActorRef votedFor() {
             return votedFor;
         }
+
+        // TODO
+        public void persistToDisk() {}
+        public void loadFromDisk() {}
     }
 }

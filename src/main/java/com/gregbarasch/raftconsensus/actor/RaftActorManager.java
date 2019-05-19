@@ -24,8 +24,10 @@ public enum RaftActorManager {
 
     private static final int NUM_INSTANCES = 3;
 
+    private static ActorRef leader = null;
+
     private static final ActorSystem actorSystem = ActorSystem.create();
-    private static volatile LinkedList<ActorRef> actors = new LinkedList<>();
+    private static LinkedList<ActorRef> actors = new LinkedList<>();
 
     public List<ActorRef> getActors() {
         return actors;
@@ -53,5 +55,17 @@ public enum RaftActorManager {
         // stop the system
         final Future<Terminated> terminate = actorSystem.terminate();
         Await.ready(terminate, scala.concurrent.duration.Duration.fromNanos(timeout.toNanos()));
+    }
+
+    public void setLeader(ActorRef actor) {
+        leader = actor;
+    }
+
+    public static void registerCommand(Object command) {
+        if (leader == null) {
+            logger.warn("Startup has not completed yet. The command: " + command.toString() + " could not be processed.");
+        } else {
+            // TODO
+        }
     }
 }

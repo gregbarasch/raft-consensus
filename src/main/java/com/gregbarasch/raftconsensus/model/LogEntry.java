@@ -3,7 +3,7 @@ package com.gregbarasch.raftconsensus.model;
 public class LogEntry {
 
     private final Object command;
-    private final int index; // FIXME for some reason its supposed to start from 1? double check
+    private final int index;
     private final long term;
 
     public LogEntry(Object command, int index, long term) {
