@@ -13,6 +13,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * This class handles the creation and destruction of our actor system + instances
+ */
 public enum RaftActorManager {
 
     INSTANCE;

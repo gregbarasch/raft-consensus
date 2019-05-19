@@ -1,6 +1,6 @@
 package com.gregbarasch.raftconsensus.messaging;
 
-class RaftMessage {
+abstract class RaftMessage {
 
     private final long term;
 

@@ -4,6 +4,7 @@ import akka.actor.ActorRef;
 
 import java.util.HashMap;
 
+// TODO reinit after election
 public class LeaderData {
     // for each server, index of next log entry to send to that server (initialized to leader last log index + 1)
     private final HashMap<ActorRef, Integer> nextIndex = new HashMap<>();

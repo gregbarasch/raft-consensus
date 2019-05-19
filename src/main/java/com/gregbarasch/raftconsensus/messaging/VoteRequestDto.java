@@ -1,11 +1,21 @@
 package com.gregbarasch.raftconsensus.messaging;
 
 public class VoteRequestDto extends RaftMessage {
-    // FIXME vote only granted to nodes with more up to date logs...
-    private final int logIndex;
-    private final int logTerm;
 
-    public VoteRequestDto(long term) {
+    private final Integer logIndex;
+    private final Long logTerm;
+
+    public VoteRequestDto(long term, Integer logIndex, Long logTerm) {
         super(term);
+        this.logIndex = logIndex;
+        this.logTerm = logTerm;
+    }
+
+    public Integer getLogIndex() {
+        return logIndex;
+    }
+
+    public Long getLogTerm() {
+        return logTerm;
     }
 }
