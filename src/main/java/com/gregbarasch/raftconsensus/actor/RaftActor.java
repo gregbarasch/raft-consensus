@@ -11,8 +11,8 @@ import com.gregbarasch.raftconsensus.model.VolatileLeaderData;
 import org.apache.log4j.Logger;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
@@ -20,10 +20,12 @@ import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.CANDIDA
 import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.FOLLOWER;
 import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.LEADER;
 
-// TODO note in bugs that i share teh same timeout for heartbeating and for regular timeouts
+// TODO note in bugs that every actor has the same heartbeat timer
 // TODO note how i dont have a hearrtbeat retry for ONLY people who didnt respond
 // TODO note how I dont retry for a requestVote
 // TODO there might be a race condition in between when a candidate becomes a leader from receiving marjority, and when the old leader discovers the new leader
+// TODO I did not limit the batch size
+// TODO discuss how I did not implement a ds to relate requests to responses... What, like a correlation ID?
 
 // TODO follower rcan redirerct clients
 // TODO persist stuff to the disk
@@ -35,7 +37,7 @@ import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.LEADER;
 */
 
 // TODO followers only apply current term entries. only if suffix is compatible
-// TODO followers only refuse an update if therers an earlierr conflict : leader will send longer suffix next time
+// TODO followers only refuse an update if therers an earlier conflict : leader will send longer suffix next time
 // TODO leader sends its last entry, followers might reject if the suffix is bad and follower will respond with their good 1
 
 class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.PersistentData> {
@@ -43,8 +45,6 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
 
     // Used for elections
     private Set<ActorRef> actorsDidntVoteYesSet;
-    // Used for heartbeating
-    private Set<ActorRef> actorsDidntBeatSet;
 
     private VolatileLeaderData leaderData = null;
     private int commitIndex = 0;
@@ -58,12 +58,12 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         when(FOLLOWER,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
                         .event(Timeout.class, (timeout, data) -> {
-                            resetTimeout();
+                            resetTimeout(Timeout.ELECTION);
                             return goTo(CANDIDATE);
                         })
-                        .event(AppendEntriesRequestMessage.class, (message, data) -> {
-                            resetTimeout();
-                            return onAppendEntriesRequestMessage(message);
+                        .event(AppendEntriesRequestDto.class, (message, data) -> {
+                            resetTimeout(Timeout.ELECTION);
+                            return onAppendEntriesRequestDto(message);
                         })
                         .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request))
                         .build()
@@ -72,12 +72,12 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         when(CANDIDATE,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
                         .event(Timeout.class, (timeout, data) -> {
-                            resetTimeout();
+                            resetTimeout(Timeout.ELECTION);
                             return goTo(CANDIDATE);
                         })
-                        .event(AppendEntriesRequestMessage.class, (message, data) -> {
-                            resetTimeout(); // FIXME??? i think this is correct
-                            return onAppendEntriesRequestMessage(message);
+                        .event(AppendEntriesRequestDto.class, (message, data) -> {
+                            resetTimeout(Timeout.ELECTION); // FIXME??? i think this is correct
+                            return onAppendEntriesRequestDto(message);
                         })
                         .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request))
                         .event(VoteResponseDto.class, (vote, data) -> onVoteDto(vote))
@@ -87,10 +87,11 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         when(LEADER,
                 new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
                         .event(Timeout.class, (timeout, data) -> {
-                            resetTimeout();
+                            resetTimeout(Timeout.HEARTBEAT);
                             appendEntries();
                             return stay();
                         })
+                        .event(AppendEntriesRequestDto.class, (message, data) -> onAppendEntriesRequestDto(message))
                         .event(AppendEntriesResponseDto.class, (response, data) -> onAppendEntriesResponseDto(response))
                         .event(VoteRequestDto.class, (request, data) -> onRequestVoteDto(request))
                         .build()
@@ -111,40 +112,72 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                         .state(CANDIDATE, FOLLOWER, () -> {})
                         .state(CANDIDATE, LEADER, this::handleLeaderTransition)
                         .state(LEADER, FOLLOWER, () -> {
-                            resetTimeout();
+                            cancelTimeout(Timeout.HEARTBEAT);
+                            startTimeout(Timeout.ELECTION);
                             logger.info(getSelf().hashCode() + " is no longer the leader");
                         })
                         .build()
         );
 
         startWith(FOLLOWER, new RaftStateMachine.PersistentData());
-        startTimeout();
+        startTimeout(Timeout.ELECTION);
     }
 
     private void handleLeaderTransition() {
         // reset leaderData
-        final int lastLogIndex = stateData().getLog().getLastEntry().getIndex();
-        leaderData = new VolatileLeaderData(lastLogIndex);
+        final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = stateData().getLog().getLastEntry();
+        if (lastLogEntry == null) {
+            leaderData = new VolatileLeaderData(-1);
+        } else {
+            leaderData = new VolatileLeaderData(lastLogEntry.getIndex());
+        }
 
-        // Register self with system as leaderr
+        // Register self with system as leader
         RaftActorManager.INSTANCE.setLeader(getSelf());
         logger.info(getSelf().hashCode() + " has become the leader");
 
         // kick off heartbeat
-        resetTimeout();
+        cancelTimeout(Timeout.ELECTION);
+        startTimeout(Timeout.HEARTBEAT);
         appendEntries();
     }
 
+    /**
+     * Sending in batches
+     */
     private void appendEntries() {
-        // (FIXME make it work for more than just heartbeat)
-        actorsDidntBeatSet = new HashSet<>(RaftActorManager.INSTANCE.getActors()); // FIXME try again for pepes who didnt beat only?
-        actorsDidntBeatSet.remove(getSelf());
-
-        final AppendEntriesRequestMessage request = new HeartbeatDto(stateData().getTerm());
-        for (final ActorRef actor : new ArrayList<>(actorsDidntBeatSet)) {
+        // For each actor
+        for (final ActorRef actor : RaftActorManager.INSTANCE.getActors()) {
             if (actor.equals(getSelf())) continue; // skip self
-            actor.tell(request, getSelf());
+
+            final int actorNextIndex = leaderData.getNextIndex(actor);
+            final int actorMatchIndex = leaderData.getMatchIndex(actor);
+
+            // if were within bounds
+            if (actorNextIndex <= stateData().getLog().size()) {
+
+                // calculate the end index
+                int endIndex = stateData().getLog().size()-1;
+                if (actorMatchIndex + 1 < actorNextIndex || endIndex < actorNextIndex) {
+                    endIndex = actorNextIndex;
+                }
+
+                int prevIndex = actorNextIndex-1;
+                long prevTerm = (prevIndex <= 0) ? 0 : stateData().getLog().getEntry(prevIndex).getTerm();
+
+                final List<com.gregbarasch.raftconsensus.model.LogEntry> logEntries = stateData().getLog().subLog(actorNextIndex, endIndex);
+                final AppendEntriesRequestDto request = new AppendEntriesRequestDto(
+                        stateData().getTerm(),
+                        Math.min(endIndex, commitIndex),
+                        prevIndex,
+                        prevTerm,
+                        logEntries);
+
+                actor.tell(request, getSelf());
+            }
         }
+
+        // If an actor is skipped, it means that its log is ahead of ours and it should become the leader
     }
 
     private void election() {
@@ -168,7 +201,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
 
         // Attempt to receive votes from majority of actors
         final VoteRequestDto voteRequestDto = new VoteRequestDto(stateData().getTerm(), lastLogIndex, lastLogTerm);
-        for (final ActorRef actor : new ArrayList<>(actorsDidntVoteYesSet)) {
+        for (final ActorRef actor : actorsDidntVoteYesSet) {
             if (actor.equals(getSelf())) continue; // skip self
             actor.tell(voteRequestDto, getSelf()); // TODO request vote again with a timer orr something
         }
@@ -225,23 +258,22 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         return nextState;
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onAppendEntriesRequestMessage(AppendEntriesRequestMessage message) {
+    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onAppendEntriesRequestDto(AppendEntriesRequestDto request) {
 
-        final RaftMessage raftMessage = (RaftMessage) message;
-
-        final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(raftMessage);
+        final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(request);
 
         // Return false
         boolean success = true;
-        if (raftMessage.getTerm() < stateData().getTerm()) {
+        if (request.getTerm() < stateData().getTerm()) {
             success = false;
+        } else {
+
         }
 
         // TODO append the entry...
 
         final AppendEntriesResponseDto response = new AppendEntriesResponseDto(stateData().getTerm(), success);
         getSender().tell(response, getSelf());
-
         return nextState;
     }
 
@@ -251,13 +283,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(response);
         if (nextState.stateName() != stateName()) return nextState;
 
-        actorsDidntBeatSet.remove(getSender());
-
-        // If we have enough votes, become the leader
-        if (actorsDidntBeatSet.size() <= (RaftActorManager.INSTANCE.getActors().size()-1)/2) {
-            resetTimeout();
-            appendEntries();
-        }
+        // TODO dostuff
 
         return nextState;
     }
@@ -274,24 +300,29 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         return stay();
     }
 
-    private void startTimeout() {
-        final int min = 150;
-        final int max = 300;
+    private void startTimeout(Timeout timeout) {
+        // heartbeats happen twice as often as election timeouts arbitrarily
+        int min = 150;
+        int max = 300;
+        if (timeout == Timeout.HEARTBEAT) {
+            min =  min / 2;
+            max = max / 2;
+        }
+
         final long timeoutMillis = new Random().nextInt(max - min + 1) + min;
-        setTimer(Timeout.INSTANCE.name(), Timeout.INSTANCE, Duration.ofMillis(timeoutMillis));
+        setTimer(timeout.name(), timeout, Duration.ofMillis(timeoutMillis));
     }
 
-    private void cancelTimeout() {
-        cancelTimer(Timeout.INSTANCE.name());
+    private void cancelTimeout(Timeout timeout) {
+        cancelTimer(timeout.name());
     }
 
-    private void resetTimeout() {
-        cancelTimeout();
-        startTimeout();
+    private void resetTimeout(Timeout timeout) {
+        cancelTimeout(timeout);
+        startTimeout(timeout);
     }
 
-    // TODO ELECTION, HEARTBEAT
     private enum Timeout {
-        INSTANCE
+        ELECTION, HEARTBEAT
     }
 }

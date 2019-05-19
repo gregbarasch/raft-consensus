@@ -17,9 +17,21 @@ public class Log {
         log.addAll(overwritingLogSuffix);
     }
 
+    public LogEntry getEntry(int index) {
+        return log.get(index);
+    }
+
     public LogEntry getLastEntry() {
         final int lastIndex = log.size() - 1;
         if (lastIndex < 0) return null;
         return log.get(lastIndex);
+    }
+
+    public List<LogEntry> subLog(int startIndex, int endIndex) {
+        return log.subList(startIndex, endIndex);
+    }
+
+    public int size() {
+        return log.size();
     }
 }

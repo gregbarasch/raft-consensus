@@ -61,7 +61,7 @@ public enum RaftActorManager {
         leader = actor;
     }
 
-    public static void registerCommand(Object command) {
+    public void registerCommand(Object command) {
         if (leader == null) {
             logger.warn("Startup has not completed yet. The command: " + command.toString() + " could not be processed.");
         } else {
