@@ -16,8 +16,15 @@ public class Main {
 
         try (final Scanner stdin = new Scanner(System.in)) {
 
-            //noinspection StatementWithEmptyBody
-            while (!stdin.nextLine().equals(""));
+            // Send commands. Enter to quit
+            String input = stdin.nextLine();
+            while (!input.equals("")) {
+                if (input != null) {
+                    RaftActorManager.INSTANCE.sendCommand(input);
+                }
+                input = (stdin.hasNextLine()) ? stdin.nextLine() : null;
+            }
+
             RaftActorManager.INSTANCE.kill();
 
         } catch (InterruptedException | TimeoutException ex) {

@@ -7,14 +7,10 @@ public class Log {
 
     private List<LogEntry> log = new ArrayList<>(); // FIXME why is the first index 1....
 
-    public void appendEntries(List<LogEntry> logSuffix) {
-        log.addAll(logSuffix);
-    }
-
-    public void overwriteEntries(List<LogEntry> overwritingLogSuffix) {
-        final int startIndex = overwritingLogSuffix.get(0).getIndex();
+    public void putEntries(List<LogEntry> entries) {
+        final int startIndex = entries.get(0).getIndex();
         log = log.subList(0, startIndex);
-        log.addAll(overwritingLogSuffix);
+        log.addAll(entries);
     }
 
     public LogEntry getEntry(int index) {
@@ -27,8 +23,12 @@ public class Log {
         return log.get(lastIndex);
     }
 
-    public List<LogEntry> subLog(int startIndex, int endIndex) {
-        return log.subList(startIndex, endIndex);
+    /**
+     * @param fromIndex inclusive
+     * @param toIndex exclusive
+     */
+    public List<LogEntry> subLog(int fromIndex, int toIndex) {
+        return log.subList(fromIndex, toIndex);
     }
 
     public int size() {

@@ -4,6 +4,7 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
+import com.gregbarasch.raftconsensus.messaging.CommandRequestDto;
 import org.apache.log4j.Logger;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
@@ -61,11 +62,12 @@ public enum RaftActorManager {
         leader = actor;
     }
 
-    public void registerCommand(Object command) {
+    public void sendCommand(Object command) {
         if (leader == null) {
             logger.warn("Startup has not completed yet. The command: " + command.toString() + " could not be processed.");
         } else {
-            // TODO
+            CommandRequestDto commandRequestDto = new CommandRequestDto(command);
+            leader.tell(commandRequestDto, null); // TODO ask for response
         }
     }
 }
