@@ -15,7 +15,6 @@ public class VolatileLeaderData {
     // for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
     private final HashMap<ActorRef, Integer> matchIndex;
 
-    // FIXME ?? fix indexs
     public VolatileLeaderData(int lastLogIndex) {
         nextIndex = new HashMap<>();
         matchIndex = new HashMap<>();

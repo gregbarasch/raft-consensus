@@ -5,12 +5,28 @@ import java.util.List;
 
 public class Log {
 
-    private List<LogEntry> log = new ArrayList<>(); // FIXME why is the first index 1....
+    // FIXME?? not necessary. index's start at -1 and 0 instead of 0 and 1
+    private List<LogEntry> log = new ArrayList<>();
 
     public void putEntries(List<LogEntry> entries) {
         final int startIndex = entries.get(0).getIndex();
-        log = log.subList(0, startIndex);
-        log.addAll(entries);
+
+        // beginning
+        List<LogEntry> beginning = log.subList(0, startIndex);
+
+        // middle
+        beginning.addAll(entries);
+
+        // end
+        // If we have new entries that didnt exist in what was sent
+        final LogEntry lastNewEntry = entries.get(entries.size()-1);
+        if (getLastEntry().getIndex() > lastNewEntry.getIndex()) {
+            List<LogEntry> end = log.subList(lastNewEntry.getIndex()+1, getLastEntry().getIndex()+1);
+            beginning.addAll(end);
+        }
+
+        // result
+        log = beginning;
     }
 
     public LogEntry getEntry(int index) {

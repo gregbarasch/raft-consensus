@@ -1,6 +1,9 @@
 package com.gregbarasch.raftconsensus.model;
 
 import akka.actor.ActorRef;
+import org.apache.log4j.Logger;
+
+import java.io.*;
 
 public class RaftStateMachine {
 
@@ -11,11 +14,32 @@ public class RaftStateMachine {
     }
 
     // Persistent data for all servers
-    public static class PersistentData {
+    public static class PersistentData implements Serializable {
+        private static final Logger logger = Logger.getLogger(PersistentData.class);
 
-        private long term = 0;
-        private final Log log = new Log();
-        private ActorRef votedFor = null;
+        private static final String PERSIST_FOLDER_NAME = "persist";
+
+        private static final long serialVersionUID = 1L;
+
+        private final int id;
+        private long term;
+        private final Log log;
+        private ActorRef votedFor;
+
+        public PersistentData(int id) {
+            this.id = id;
+
+            PersistentData diskData = loadFromDisk();
+            if (diskData == null) {
+                term = 0;
+                log = new Log();
+                votedFor = null;
+            } else {
+                term = diskData.getTerm();
+                log = diskData.getLog();
+                votedFor = diskData.votedFor();
+            }
+        }
 
         public void nextTerm() {
             term++;
@@ -45,8 +69,27 @@ public class RaftStateMachine {
             return votedFor;
         }
 
-        // TODO
-        public void persistToDisk() {}
-        public void loadFromDisk() {}
+        // TODO write to disk
+        private void persistToDisk() {
+            // create folder
+            new File(PERSIST_FOLDER_NAME).mkdir();
+
+            // create file and write to it
+            final String pathToFile = PERSIST_FOLDER_NAME + File.separator + id;
+            try (final ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(pathToFile))) {
+                oos.writeObject(this);
+            } catch (IOException e) {
+                logger.error("Unable to write object to path: " + pathToFile);
+            }
+        }
+
+        private PersistentData loadFromDisk() {
+            final String pathToFile = PERSIST_FOLDER_NAME + File.separator + id;
+            try (final ObjectInputStream ois = new ObjectInputStream(new FileInputStream(pathToFile))) {
+                return (PersistentData) ois.readObject();
+            } catch (Exception e) {
+                return null;
+            }
+        }
     }
 }

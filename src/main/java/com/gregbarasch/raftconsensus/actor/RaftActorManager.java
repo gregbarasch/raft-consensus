@@ -23,7 +23,7 @@ public enum RaftActorManager {
 
     private static final Logger logger = Logger.getLogger(RaftActorManager.class);
 
-    private static final int NUM_INSTANCES = 3;
+    private static final int NUM_INSTANCES = 8;
 
     private static ActorRef leader = null;
 
@@ -60,6 +60,10 @@ public enum RaftActorManager {
 
     public void setLeader(ActorRef actor) {
         leader = actor;
+    }
+
+    public ActorRef getLeader() {
+        return leader;
     }
 
     public void sendCommand(Object command) {
