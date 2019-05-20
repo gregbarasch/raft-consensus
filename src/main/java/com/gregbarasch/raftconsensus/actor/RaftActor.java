@@ -326,7 +326,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     }
 
     private int getId() {
-        return hashCode(); // guarenteed unique for now... Should be port number over network
+        return hashCode(); // FIXME guarenteed unique for now... Should be port number over network
     }
 
     private void startTimeout(Timeout timeout) {

@@ -7,6 +7,7 @@
 - https://container-solutions.com/raft-explained-part-33-safety-liveness-guarantees-conclusion/
 - https://www.geeksforgeeks.org/raft-consensus-algorithm/
 - http://thesecretlivesofdata.com/raft/
+- https://thesquareplanet.com/blog/students-guide-to-raft/
 
 # Notes on bugs and feature issues
 - If any users don't respond to either requestVote orr heartbeat, they will have to wait until the next one
@@ -15,6 +16,4 @@
 - I only handled single entry appending, no batch
 - I did not handle leader redirects and client response
 - Timeouts are somewhat incorrect... Trying to fix... I realized too late: If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate.
-
-// TODO follower can redirect clients
-// TODO respond to commands from clients
+- The ID that I use to save to file is incorrect, but I still have much work to be done...
