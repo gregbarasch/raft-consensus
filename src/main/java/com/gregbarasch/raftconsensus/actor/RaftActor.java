@@ -31,7 +31,7 @@ import java.util.Set;
 // TODO only handled single entry appending, no batch
 // TODO did not handle leader redirects and client response
 
-// TODO follower rcan redirerct clients
+// TODO follower can redirect clients
 // TODO actually use the commands...
 
 class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.PersistentData> {
@@ -41,7 +41,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     private Set<ActorRef> actorsDidntVoteYesSet;
 
     private VolatileLeaderData leaderData = null;
-    private int commitIndex = 0;
+    private int commitIndex = -1;
 
     static Props props() {
         return Props.create(RaftActor.class);
@@ -267,7 +267,13 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
 
             success = true;
             matchIndex = stateData().getLog().size()-1;
+
+            // update commit
+            final int prevCommitIndex = commitIndex;
             commitIndex = Math.max(commitIndex, request.getCommitIndex()); // sender should have enough info to ensure that commitIndex sent is <= receivers log.size()-1
+            if (prevCommitIndex != commitIndex) {
+                logger.debug(getSelf().hashCode() + " commitIndex set to: " + commitIndex);
+            }
         }
 
         // send response
@@ -285,7 +291,16 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                 leaderData.setMatchIndex(getSender(), response.getMatchIndex());
                 leaderData.setNextIndex(getSender(), response.getMatchIndex()+1);
 
-                // TODO if majority of followers commit the command, this is where we execute
+                // only commits 1 at a time for now
+                long newlyCommittedCount = RaftActorManager.INSTANCE.getActors().stream()
+                        .filter(actor -> leaderData.getMatchIndex(actor) > commitIndex)
+                        .count();
+
+                if (newlyCommittedCount > RaftActorManager.INSTANCE.getActors().size()/2.0) {
+                    commitIndex++;
+                    // TODO execute command
+                    logger.info(getSelf().hashCode() + " leader commit has increased to " + commitIndex);
+                }
             } else {
                 leaderData.setNextIndex(getSender(), leaderData.getNextIndex(getSender())-1);
             }
@@ -301,7 +316,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
             stateData().newTerm(sendersTerm);
 
             // fail to follower if were not one already
-            if (!(stateName() == RaftStateMachine.State.FOLLOWER)) return goTo(RaftStateMachine.State.FOLLOWER);
+            if (stateName() != RaftStateMachine.State.FOLLOWER) return goTo(RaftStateMachine.State.FOLLOWER);
         }
         return stay();
     }

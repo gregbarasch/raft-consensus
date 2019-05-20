@@ -22,7 +22,7 @@ public class VolatileLeaderData {
 
         for (final ActorRef actor : RaftActorManager.INSTANCE.getActors()) {
             nextIndex.put(actor, lastLogIndex+1);
-            matchIndex.put(actor, 0);
+            matchIndex.put(actor, -1);
         }
     }
 

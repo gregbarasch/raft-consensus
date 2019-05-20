@@ -19,12 +19,9 @@ public class Main {
             // Send commands. Enter to quit
             String input = stdin.nextLine();
             while (!input.equals("")) {
-                if (input != null) {
-                    RaftActorManager.INSTANCE.sendCommand(input);
-                }
-                input = (stdin.hasNextLine()) ? stdin.nextLine() : null;
+                RaftActorManager.INSTANCE.sendCommand(input);
+                input = stdin.nextLine();
             }
-
             RaftActorManager.INSTANCE.kill();
 
         } catch (InterruptedException | TimeoutException ex) {
