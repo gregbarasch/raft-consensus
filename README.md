@@ -17,3 +17,4 @@
 - I did not handle leader redirects and client response
 - Timeouts are somewhat incorrect... Trying to fix... I realized too late: If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate.
 - The ID that I use to save to file is incorrect, but I still have much work to be done...
+- Sometimes the user input will timeout because it is expecting a command. I have not yet had time to fix this.

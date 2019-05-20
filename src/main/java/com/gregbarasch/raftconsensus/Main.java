@@ -20,7 +20,7 @@ public class Main {
             String input = stdin.nextLine();
             while (!input.equals("")) {
                 RaftActorManager.INSTANCE.sendCommand(input);
-                input = stdin.nextLine();
+                input = stdin.nextLine(); // FIXME times out and throws exception
             }
             RaftActorManager.INSTANCE.kill();
 

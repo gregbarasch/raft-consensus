@@ -4,14 +4,6 @@ import com.gregbarasch.raftconsensus.model.LogEntry;
 
 import java.util.List;
 
-/**
- * FIXME
- * AppendEntries is used by the Leader node for replicating the log
- * entries and also as a heartbeat mechanism to check if a server
- * is still up. If heartbeat is responded back to, the server is up else,
- * the server is down. Be noted that the heartbeats do not contain any log entries.
- */
-
 // SO the first suffix is empty, but we will get the last index
 public class AppendEntriesRequestDto extends RaftMessage {
 
