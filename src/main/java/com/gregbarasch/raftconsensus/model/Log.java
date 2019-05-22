@@ -9,24 +9,40 @@ public class Log {
     private List<LogEntry> log = new ArrayList<>();
 
     public void putEntries(List<LogEntry> entries) {
+
         final int startIndex = entries.get(0).getIndex();
+        final int endIndex = entries.get(entries.size()-1).getIndex();
 
-        // beginning
-        List<LogEntry> beginning = log.subList(0, startIndex);
+        int entryIndex = -1; // This will be our current position between start and end inclusive
+        int currIndex = 0; // This will be the index counter starting from 0
 
-        // middle
-        beginning.addAll(entries);
+        List<LogEntry> resultLog = log.subList(0, startIndex);
 
-        // end
-        // If we have new entries that didnt exist in what was sent
-        final LogEntry lastNewEntry = entries.get(entries.size()-1);
-        if (getLastEntry().getIndex() > lastNewEntry.getIndex()) {
-            List<LogEntry> end = log.subList(lastNewEntry.getIndex()+1, getLastEntry().getIndex()+1);
-            beginning.addAll(end);
+        // We are going to make sure each entry matches
+        for (final LogEntry entry : entries) {
+            entryIndex = entry.getIndex();
+
+            // if our index is in bounds and our log doesnt match, break early
+            if (entryIndex < log.size() && !log.get(entryIndex).equals(entry)) {
+                break;
+            }
+
+            // otherwise just add back the matching entry
+            resultLog.add(entry);
+            currIndex++;
         }
 
-        // result
-        log = beginning;
+        // Now, if we have entries from breaking early, append them
+        if (entryIndex != endIndex) {
+            final List<LogEntry> remainingEntries = entries.subList(currIndex, entries.size());
+            resultLog.addAll(remainingEntries);
+        } else if (endIndex < log.size()-1) {
+            // otherwise if we have some additional entries in our log, append those
+            final List<LogEntry> remainingEntries = log.subList(endIndex, log.size());
+            resultLog.addAll(remainingEntries);
+        }
+
+        log = resultLog;
     }
 
     public LogEntry getEntry(int index) {

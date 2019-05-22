@@ -18,7 +18,6 @@ public class RaftStateMachine {
         private static final Logger logger = Logger.getLogger(PersistentData.class);
 
         private static final String PERSIST_FOLDER_NAME = "persist";
-
         private static final long serialVersionUID = 1L;
 
         private final int id;

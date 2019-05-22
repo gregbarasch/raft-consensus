@@ -66,9 +66,9 @@ public enum RaftActorManager {
         return leader;
     }
 
-    public void sendCommand(Object command) {
+    public void sendCommand(String command) {
         if (leader == null) {
-            logger.warn("Startup has not completed yet. The command: " + command.toString() + " could not be processed.");
+            logger.warn("Startup has not completed yet. The command: " + command + " could not be processed.");
         } else {
             CommandRequestDto commandRequestDto = new CommandRequestDto(command);
             leader.tell(commandRequestDto, null); // TODO ask for response

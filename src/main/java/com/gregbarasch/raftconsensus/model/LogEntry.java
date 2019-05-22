@@ -1,17 +1,19 @@
 package com.gregbarasch.raftconsensus.model;
 
+import java.util.Objects;
+
 public class LogEntry {
 
-    private final Object command;
+    private final String command;
     private final int index;
     private final long term;
 
-    public LogEntry(Object command, int index, long term) {
+    public LogEntry(String command, int index, long term) {
         this.command = command;
         this.index = index;
         this.term = term;
     }
-    public Object getCommand() {
+    public String getCommand() {
         return command;
     }
 
@@ -21,5 +23,21 @@ public class LogEntry {
 
     public long getTerm() {
         return term;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) return true;
+        if (!(other instanceof LogEntry)) return false;
+
+        LogEntry entry = (LogEntry) other;
+        return index == entry.index
+                && term == entry.term
+                && Objects.equals(command, entry.command);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(command, index, term);
     }
 }
