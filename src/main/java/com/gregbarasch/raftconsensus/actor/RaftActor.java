@@ -5,12 +5,7 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.japi.pf.FSMStateFunctionBuilder;
 import akka.japi.pf.FSMTransitionHandlerBuilder;
-import com.gregbarasch.raftconsensus.messaging.AppendEntriesRequestDto;
-import com.gregbarasch.raftconsensus.messaging.AppendEntriesResponseDto;
-import com.gregbarasch.raftconsensus.messaging.CommandRequestDto;
-import com.gregbarasch.raftconsensus.messaging.RaftMessage;
-import com.gregbarasch.raftconsensus.messaging.VoteRequestDto;
-import com.gregbarasch.raftconsensus.messaging.VoteResponseDto;
+import com.gregbarasch.raftconsensus.messaging.*;
 import com.gregbarasch.raftconsensus.model.Log;
 import com.gregbarasch.raftconsensus.model.RaftStateMachine;
 import com.gregbarasch.raftconsensus.model.VolatileLeaderData;
@@ -33,6 +28,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
 
     private VolatileLeaderData leaderData = null;
     private int commitIndex = -1;
+    private int lastApplied = -1; // TODO this is used to say which entry was last executed
 
     static Props props() {
         return Props.create(RaftActor.class);
@@ -58,7 +54,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                         })
                         .event(AppendEntriesRequestDto.class, (message, data) -> onAppendEntriesRequestDto(message))
                         .event(VoteRequestDto.class, (request, data) -> onVoteRequestDto(request))
-                        .event(VoteResponseDto.class, (vote, data) -> onVoteResponseDto(vote))
+                        .event(VoteResponseDto.class, (vote, data) -> termConfusion(vote) ? stay() : onVoteResponseDto(vote))
                         .build()
         );
 
@@ -70,7 +66,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                             return stay();
                         })
                         .event(AppendEntriesRequestDto.class, (message, data) -> onAppendEntriesRequestDto(message))
-                        .event(AppendEntriesResponseDto.class, (response, data) -> onAppendEntriesResponseDto(response))
+                        .event(AppendEntriesResponseDto.class, (response, data) -> termConfusion(response) ? stay() : onAppendEntriesResponseDto(response))
                         .event(VoteRequestDto.class, (request, data) -> onVoteRequestDto(request))
                         .event(CommandRequestDto.class, (command, data) -> {
                             logger.info(getSelf().hashCode() + " received command: " + command.getCommand());
@@ -82,6 +78,12 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         );
 
         whenUnhandled(new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
+                .event(CommandRequestDto.class, (event, data) -> {
+                    // Forward commands to leader.
+                    logger.info(getSelf().hashCode() + " forwarding event to leader.");
+                    RaftActorManager.INSTANCE.getLeader().tell(event, getSender());
+                    return stay();
+                })
                 .anyEvent((event, data) -> {
                     logger.warn(getSelf().hashCode() + " unhandled event: " + event.getClass() + " in state: " + stateName().name());
                     return stay();
@@ -212,7 +214,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         }
 
         // send response
-        VoteResponseDto voteResponseDto = new VoteResponseDto(stateData().getTerm(), vote);
+        VoteResponseDto voteResponseDto = new VoteResponseDto(stateData().getTerm(), voteRequestDto.getTerm(), vote);
         getSender().tell(voteResponseDto, getSelf());
 
         return nextState;
@@ -241,7 +243,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(request);
 
         boolean success = false;
-        int matchIndex = 0;
+        int matchIndex = -1;
 
         // Fail fast if our terms are out of sync
         if (termPreUpdate == stateData().getTerm()) {
@@ -274,13 +276,14 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         }
 
         // send response
-        final AppendEntriesResponseDto response = new AppendEntriesResponseDto(stateData().getTerm(), success, matchIndex);
+        final AppendEntriesResponseDto response = new AppendEntriesResponseDto(stateData().getTerm(), request.getTerm(), success, matchIndex);
         getSender().tell(response, getSelf());
         return nextState;
     }
 
     private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onAppendEntriesResponseDto(AppendEntriesResponseDto response) {
 
+        final long termPreUpdate = stateData().getTerm();
         final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(response);
 
         if (stateData().getTerm() == response.getTerm()) {
@@ -298,7 +301,8 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                     // TODO execute command
                     logger.info(getSelf().hashCode() + " leader commit has increased to " + commitIndex);
                 }
-            } else {
+            } else if (termPreUpdate == stateData().getTerm()) {
+                // term check avoids race condition for setting nextIndex on immediate re-election
                 leaderData.setNextIndex(getSender(), leaderData.getNextIndex(getSender())-1);
             }
         }
@@ -324,6 +328,13 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
             return 0;
         }
         return log.getEntry(index).getTerm();
+    }
+
+    private boolean termConfusion(RaftResponseMessage response) {
+        if (response.getOriginalRequestTerm() == stateData().getTerm()) {
+            return false;
+        }
+        return true;
     }
 
     private int getId() {
