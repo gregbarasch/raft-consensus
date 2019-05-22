@@ -1,9 +1,12 @@
 package com.gregbarasch.raftconsensus.model;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Log {
+public class Log implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     // FIXME?? not necessary. index's start at -1 and 0 instead of 0 and 1
     private List<LogEntry> log = new ArrayList<>();
@@ -42,7 +45,8 @@ public class Log {
             resultLog.addAll(remainingEntries);
         }
 
-        log = resultLog;
+        // Needed for serializability... // FIXME optimize?
+        log = new ArrayList<>(resultLog);
     }
 
     public LogEntry getEntry(int index) {

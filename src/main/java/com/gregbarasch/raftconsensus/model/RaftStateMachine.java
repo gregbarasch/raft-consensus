@@ -15,10 +15,11 @@ public class RaftStateMachine {
 
     // Persistent data for all servers
     public static class PersistentData implements Serializable {
+
         private static final Logger logger = Logger.getLogger(PersistentData.class);
 
-        private static final String PERSIST_FOLDER_NAME = "persist";
         private static final long serialVersionUID = 1L;
+        private static final String PERSIST_FOLDER_NAME = "persist";
 
         private final int id;
         private long term;
@@ -68,17 +69,17 @@ public class RaftStateMachine {
             return votedFor;
         }
 
-        // TODO write to disk
-        private void persistToDisk() {
+        public void persistToDisk() {
             // create folder
+            //noinspection ResultOfMethodCallIgnored
             new File(PERSIST_FOLDER_NAME).mkdir();
 
             // create file and write to it
             final String pathToFile = PERSIST_FOLDER_NAME + File.separator + id;
-            try (final ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(pathToFile))) {
+            try (final ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(pathToFile, false))) {
                 oos.writeObject(this);
             } catch (IOException e) {
-                logger.error("Unable to write object to path: " + pathToFile);
+                logger.error("Unable to write object to path: " + pathToFile, e);
             }
         }
 

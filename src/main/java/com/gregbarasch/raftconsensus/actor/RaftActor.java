@@ -70,7 +70,10 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                         .event(VoteRequestDto.class, (request, data) -> onVoteRequestDto(request))
                         .event(CommandRequestDto.class, (command, data) -> {
                             logger.info(getSelf().hashCode() + " received command: " + command.getCommand());
-                            final com.gregbarasch.raftconsensus.model.LogEntry logEntry = new com.gregbarasch.raftconsensus.model.LogEntry(command.getCommand(), stateData().getLog().size(), stateData().getTerm());
+                            final com.gregbarasch.raftconsensus.model.LogEntry logEntry = new com.gregbarasch.raftconsensus.model.LogEntry(
+                                    command.getCommand(),
+                                    stateData().getLog().size(),
+                                    stateData().getTerm());
                             stateData().getLog().putEntries(Collections.singletonList(logEntry));
                             return stay();
                         })
@@ -80,7 +83,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         whenUnhandled(new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
                 .event(CommandRequestDto.class, (event, data) -> {
                     // Forward commands to leader.
-                    logger.info(getSelf().hashCode() + " forwarding event to leader.");
+                    logger.debug(getSelf().hashCode() + " forwarding event to leader.");
                     RaftActorManager.INSTANCE.getLeader().tell(event, getSender());
                     return stay();
                 })
@@ -213,7 +216,8 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
             }
         }
 
-        // send response
+        // persist and send response
+        stateData().persistToDisk();
         VoteResponseDto voteResponseDto = new VoteResponseDto(stateData().getTerm(), voteRequestDto.getTerm(), vote);
         getSender().tell(voteResponseDto, getSelf());
 
@@ -275,7 +279,8 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
             }
         }
 
-        // send response
+        // persist to disk and send response
+        stateData().persistToDisk();
         final AppendEntriesResponseDto response = new AppendEntriesResponseDto(stateData().getTerm(), request.getTerm(), success, matchIndex);
         getSender().tell(response, getSelf());
         return nextState;
@@ -331,10 +336,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     }
 
     private boolean termConfusion(RaftResponseMessage response) {
-        if (response.getOriginalRequestTerm() == stateData().getTerm()) {
-            return false;
-        }
-        return true;
+        return response.getOriginalRequestTerm() != stateData().getTerm();
     }
 
     private int getId() {

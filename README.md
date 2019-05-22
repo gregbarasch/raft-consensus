@@ -1,5 +1,7 @@
-# To issue commands
+# Instructions
 > Commands can be issued as strings from the command line
+
+> Instance # can be changed from RaftActorManager
 
 # Resources
 - https://www.youtube.com/watch?v=LAqyTyNUYSY
@@ -9,12 +11,27 @@
 - http://thesecretlivesofdata.com/raft/
 - https://thesquareplanet.com/blog/students-guide-to-raft/
 
-# Notes on bugs and feature issues
+# Notes on bugs and possible feature issues
 - If any users don't respond to either requestVote or heartbeat, they will have to wait until the next one. No retry logic for this. Just a timed heartbeat
+
 - I didnt start my index at 1 for the log, I started at 0, however I did handle this. I set certain indexs to -1 to compensate, and it fit well with the design
+
 - I only handled single entry appending, no batch
-- The ID that I use to save to file is incorrect, but I still have much work to be done...
-- Sometimes the user input will timeout because it is expecting a command. I have not yet had time to fix this.
+
+- The ID that I use to save to file is incorrect. In the real world, it should be the port #
+
+- There are a couple of unhandled events IE AppendEntries in FOLLOWER and VoteResponse in LEADER. I believe that it is ok for these to remain unhandled, because they are unnecessary to handle and skipping them is the same as a failed network request
+
+- Sometimes the console input Scanner object will timeout because it is expecting a command... Java is funky with stdin sometimes. Low priority fix for now
+
+- I believe that I handled "termConfusion" correctly, but it is possible that it is incorrectly handled. I believe it is ok because failing fast is as good as a non-received response which should be tolerable
+
+ I did not implement the last applied variable, therefore these rules are not followed:
+
 - If commitIndex > lastApplied at any point during execution, you should apply a particular log entry. It is not crucial that you do it straight away (for example, in the AppendEntries RPC handler), but it is important that you ensure that this application is only done by one entity. Specifically, you will need to either have a dedicated “applier”, or to lock around these applies, so that some other routine doesn’t also detect that entries need to be applied and also tries to apply.
+
 - Make sure that you check for commitIndex > lastApplied either periodically, or after commitIndex is updated (i.e., after matchIndex is updated). For example, if you check commitIndex at the same time as sending out AppendEntries to peers, you may have to wait until the next entry is appended to the log before applying the entry you just sent out and got acknowledged.
+
+I am unsure if I implemented this rule correctly:
+
 - A leader is not allowed to update commitIndex to somewhere in a previous term (or, for that matter, a future term). Thus, as the rule says, you specifically need to check that log[N].term == currentTerm. This is because Raft leaders cannot be sure an entry is actually committed (and will not ever be changed in the future) if it’s not from their current term. This is illustrated by Figure 8 in the paper.
