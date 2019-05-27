@@ -4,6 +4,8 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
+import com.gregbarasch.raftconsensus.messaging.CommandResponseDto;
+import com.gregbarasch.raftconsensus.model.Command;
 import org.apache.log4j.Logger;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
@@ -11,6 +13,7 @@ import scala.concurrent.Future;
 import java.time.Duration;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -29,6 +32,11 @@ public enum RaftActorManager {
 
     public List<ActorRef> getActors() {
         return actors;
+    }
+
+    public ActorRef getRandomActor() {
+        final int actorIndex = new Random().nextInt(NUM_INSTANCES); // random actor
+        return actors.get(actorIndex);
     }
 
     public void start() {

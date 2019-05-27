@@ -16,16 +16,15 @@ public class Log implements Serializable {
         final int startIndex = entries.get(0).getIndex();
         final int endIndex = entries.get(entries.size()-1).getIndex();
 
-        int entryIndex = -1; // This will be our current position between start and end inclusive
         int currIndex = 0; // This will be the index counter starting from 0
 
         List<LogEntry> resultLog = log.subList(0, startIndex);
 
         // We are going to make sure each entry matches
         for (final LogEntry entry : entries) {
-            entryIndex = entry.getIndex(); // FIXME off by 1?
 
             // if our index is in bounds and our log doesnt match, break early
+            final int entryIndex = entry.getIndex();
             if (entryIndex < log.size() && !log.get(entryIndex).equals(entry)) {
                 break;
             }
@@ -36,7 +35,7 @@ public class Log implements Serializable {
         }
 
         // Now, if we have entries from breaking early, append them
-        if (entryIndex != endIndex) {
+        if (currIndex != entries.size()-1) {
             final List<LogEntry> remainingEntries = entries.subList(currIndex, entries.size());
             resultLog.addAll(remainingEntries);
         } else if (endIndex < log.size()-1) {

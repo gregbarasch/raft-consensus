@@ -29,9 +29,17 @@
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>1.6.0</version>
-                <configuration>
-                    <mainClass>com.gregbarasch.raftconsensus.Main</mainClass>
-                </configuration>
+                <executions>
+                    <execution>
+                        <id>raft-consensus</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.gregbarasch.raftconsensus.Main</mainClass>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

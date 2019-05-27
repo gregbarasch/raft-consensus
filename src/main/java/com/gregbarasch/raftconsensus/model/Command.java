@@ -1,22 +1,33 @@
 package com.gregbarasch.raftconsensus.model;
 
+import akka.actor.ActorRef;
 
-public class Command {
+import java.io.Serializable;
 
-    // command type baked into the raft implementation // FIXME
-    private final int amount;
+public class Command implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    // FIXME command type baked into the raft implementation
+    private final String command;
     private final String commandId;
+    private final ActorRef requestor;
 
-    public Command(int amount, String commandId) {
-        this.amount = amount;
+    public Command(String command, String commandId, ActorRef requestor) {
+        this.command = command;
         this.commandId = commandId;
+        this.requestor = requestor;
     }
 
-    public int getAmount() {
-        return amount;
+    public String getCommand() {
+        return command;
     }
 
     public String getCommandId() {
         return commandId;
+    }
+
+    public ActorRef getRequestor() {
+        return requestor;
     }
 }

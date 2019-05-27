@@ -30,7 +30,6 @@ import java.util.Set;
 import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.*;
 
 // TODO commandresponsedto... On failed response retry with leader
-// TODO state machine
 // TODO use commandID in commandresponse dto so client knows if its a repeat.. persist commandID in log
 
 class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.StateData> {
@@ -89,7 +88,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
                         .event(CommandRequestDto.class, (commandRequest, data) -> {
                             logger.info(getSelf().hashCode() + " received command: " + commandRequest);
                             final com.gregbarasch.raftconsensus.model.LogEntry logEntry = new com.gregbarasch.raftconsensus.model.LogEntry(
-                                    new Command(commandRequest.getAmount(), commandRequest.getRequestId()),
+                                    new Command(commandRequest.getCommand(), commandRequest.getRequestId(), getSender()),
                                     persistentActorData.getLog().size(),
                                     persistentActorData.getTerm());
                             persistentActorData.getLog().putEntries(Collections.singletonList(logEntry));
@@ -101,7 +100,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
         whenUnhandled(new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.StateData>()
                 .event(CommandRequestDto.class, (event, data) -> {
                     // Reroute
-                    getSender().tell(new CommandResponseDto(leader), getSelf()); // FIXME
+                    getSender().tell(new CommandResponseDto(leader), getSelf());
                     return stay();
                 })
                 .anyEvent((event, data) -> {
@@ -294,6 +293,13 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
                     if (prevCommitIndex != commitIndex) {
                         logger.debug(getSelf().hashCode() + " commitIndex set to: " + commitIndex);
                     }
+
+                    // apply the commits 1 by 1
+                    for (int i = prevCommitIndex+1; i<= commitIndex; i++) {
+                        stateData().apply(persistentActorData.getLog().getEntry(i));
+                        logger.debug(getSelf().hashCode() + " applied commit #" + i);
+                        lastApplied = i;
+                    }
                 }
             }
         }
@@ -321,10 +327,21 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
 
                 // Commit everything new...
                 while (newlyCommittedCount > RaftActorManager.INSTANCE.getActors().size()/2.0) {
-                    // TODO execute command and respond to client
+
+                    // commit
                     commitIndex++;
                     logger.info(getSelf().hashCode() + " leader commit has increased to " + commitIndex);
 
+                    // apply
+                    final com.gregbarasch.raftconsensus.model.LogEntry logEntry = persistentActorData.getLog().getEntry(commitIndex);
+                    stateData().apply(persistentActorData.getLog().getEntry(commitIndex));
+                    logger.debug(getSelf().hashCode() + " applied commit #" + commitIndex);
+                    lastApplied = commitIndex;
+
+                    // reply back to sender
+                    logEntry.getCommand().getRequestor().tell(new CommandResponseDto(getSelf()), getSelf());
+
+                    // check for more commits
                     newlyCommittedCount = RaftActorManager.INSTANCE.getActors().stream()
                             .filter(actor -> volatileLeaderData.getMatchIndex(actor) > commitIndex)
                             .count();
