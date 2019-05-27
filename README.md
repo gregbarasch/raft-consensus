@@ -3,6 +3,8 @@
 
 > Instance # can be changed from RaftActorManager
 
+>Actor persistent data is saved within the persistent_data folder, and the state machine is saved within the state_machine folder
+
 # Resources
 - https://www.youtube.com/watch?v=LAqyTyNUYSY
 - https://medium.freecodecamp.org/in-search-of-an-understandable-consensus-algorithm-a-summary-4bc294c97e0d

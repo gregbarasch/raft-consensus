@@ -2,7 +2,7 @@ package com.gregbarasch.raftconsensus.actor;
 
 import akka.actor.ActorSystem;
 import akka.testkit.TestActorRef;
-import com.gregbarasch.raftconsensus.model.RaftStateMachine;
+import com.gregbarasch.raftconsensus.model.statemachines.ActorStateMachine;
 import org.junit.Test;
 
 public class RaftActorTest {
@@ -14,7 +14,7 @@ public class RaftActorTest {
         final RaftActor actor = ref.underlyingActor();
 
         // Change to leader
-        actor.applyState(actor.goTo(RaftStateMachine.State.LEADER));
+        actor.applyState(actor.goTo(ActorStateMachine.State.LEADER));
 
         // FIXME to be continued...
     }
