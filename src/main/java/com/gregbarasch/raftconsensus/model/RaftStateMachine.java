@@ -1,9 +1,13 @@
 package com.gregbarasch.raftconsensus.model;
 
-import akka.actor.ActorRef;
 import org.apache.log4j.Logger;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
 public class RaftStateMachine {
 
@@ -13,69 +17,36 @@ public class RaftStateMachine {
         FOLLOWER, CANDIDATE, LEADER
     }
 
-    // Persistent data for all servers
-    public static class PersistentData implements Serializable {
+    // state machine for all servers
+    public static class StateData {
 
-        private static final Logger logger = Logger.getLogger(PersistentData.class);
-
-        private static final long serialVersionUID = 1L;
-        private static final String PERSIST_FOLDER_NAME = "persist";
+        private static final Logger logger = Logger.getLogger(StateData.class);
+        private static final String STATE_MACHINE_FOLDER_NAME = "state_machine";
 
         private final int id;
-        private long term;
-        private final Log log;
-        private ActorRef votedFor;
+        private int ticketCount = 0; // FIXME make parametric
 
-        public PersistentData(int id) {
+        public StateData(int id) {
             this.id = id;
-
-            PersistentData diskData = loadFromDisk();
-            if (diskData == null) {
-                term = 0;
-                log = new Log();
-                votedFor = null;
-            } else {
-                term = diskData.getTerm();
-                log = diskData.getLog();
-                votedFor = diskData.votedFor();
-            }
         }
 
-        public void nextTerm() {
-            term++;
-            votedFor = null;
+        public void apply(Command command) {
+            ticketCount += command.getAmount();
+            persistToDisk();
         }
 
-        // The term can only go forward
-        public void newTerm(long term) {
-            if (term <= this.term) throw new RuntimeException("Invalid term");
-            this.term = term;
-            votedFor = null;
+        public int getTicketCount() {
+            return ticketCount;
         }
 
-        public long getTerm() {
-            return term;
-        }
-
-        public Log getLog() {
-            return log;
-        }
-
-        public void votedFor(ActorRef actor) {
-            votedFor = actor;
-        }
-
-        public ActorRef votedFor() {
-            return votedFor;
-        }
-
-        public void persistToDisk() {
+        // TODO move persist and load into a util class
+        private void persistToDisk() {
             // create folder
             //noinspection ResultOfMethodCallIgnored
-            new File(PERSIST_FOLDER_NAME).mkdir();
+            new File(STATE_MACHINE_FOLDER_NAME).mkdir();
 
             // create file and write to it
-            final String pathToFile = PERSIST_FOLDER_NAME + File.separator + id;
+            final String pathToFile = STATE_MACHINE_FOLDER_NAME + File.separator + id;
             try (final ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(pathToFile, false))) {
                 oos.writeObject(this);
             } catch (IOException e) {
@@ -83,10 +54,10 @@ public class RaftStateMachine {
             }
         }
 
-        private PersistentData loadFromDisk() {
-            final String pathToFile = PERSIST_FOLDER_NAME + File.separator + id;
+        private StateData loadFromDisk() {
+            final String pathToFile = STATE_MACHINE_FOLDER_NAME + File.separator + id;
             try (final ObjectInputStream ois = new ObjectInputStream(new FileInputStream(pathToFile))) {
-                return (PersistentData) ois.readObject();
+                return (StateData) ois.readObject();
             } catch (Exception e) {
                 return null;
             }

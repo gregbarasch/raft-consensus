@@ -5,8 +5,17 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.japi.pf.FSMStateFunctionBuilder;
 import akka.japi.pf.FSMTransitionHandlerBuilder;
-import com.gregbarasch.raftconsensus.messaging.*;
+import com.gregbarasch.raftconsensus.messaging.AppendEntriesRequestDto;
+import com.gregbarasch.raftconsensus.messaging.AppendEntriesResponseDto;
+import com.gregbarasch.raftconsensus.messaging.CommandRequestDto;
+import com.gregbarasch.raftconsensus.messaging.CommandResponseDto;
+import com.gregbarasch.raftconsensus.messaging.RaftMessage;
+import com.gregbarasch.raftconsensus.messaging.RaftResponseMessage;
+import com.gregbarasch.raftconsensus.messaging.VoteRequestDto;
+import com.gregbarasch.raftconsensus.messaging.VoteResponseDto;
+import com.gregbarasch.raftconsensus.model.Command;
 import com.gregbarasch.raftconsensus.model.Log;
+import com.gregbarasch.raftconsensus.model.PersistentActorData;
 import com.gregbarasch.raftconsensus.model.RaftStateMachine;
 import com.gregbarasch.raftconsensus.model.VolatileLeaderData;
 import org.apache.log4j.Logger;
@@ -20,13 +29,22 @@ import java.util.Set;
 
 import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.*;
 
-class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.PersistentData> {
+// TODO commandresponsedto... On failed response retry with leader
+// TODO state machine
+// TODO use commandID in commandresponse dto so client knows if its a repeat.. persist commandID in log
+
+class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.StateData> {
+
     private static final Logger logger = Logger.getLogger(RaftActor.class);
 
     // Used for elections
     private Set<ActorRef> actorsDidntVoteYesSet;
 
-    private VolatileLeaderData leaderData = null;
+    private ActorRef leader = null;
+
+    private PersistentActorData persistentActorData = null;
+    private VolatileLeaderData volatileLeaderData = null;
+
     private int commitIndex = -1;
     private int lastApplied = -1; // TODO this is used to say which entry was last executed
 
@@ -36,7 +54,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
 
     private RaftActor() {
         when(FOLLOWER,
-                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
+                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.StateData>()
                         .event(Timeout.class, (timeout, data) -> {
                             resetTimeout(Timeout.ELECTION);
                             return goTo(CANDIDATE);
@@ -47,7 +65,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         );
 
         when(CANDIDATE,
-                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
+                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.StateData>()
                         .event(Timeout.class, (timeout, data) -> {
                             resetTimeout(Timeout.ELECTION);
                             return goTo(CANDIDATE);
@@ -59,7 +77,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         );
 
         when(LEADER,
-                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
+                new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.StateData>()
                         .event(Timeout.class, (timeout, data) -> {
                             resetTimeout(Timeout.HEARTBEAT);
                             appendEntries();
@@ -68,23 +86,22 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                         .event(AppendEntriesRequestDto.class, (message, data) -> onAppendEntriesRequestDto(message))
                         .event(AppendEntriesResponseDto.class, (response, data) -> termConfusion(response) ? stay() : onAppendEntriesResponseDto(response))
                         .event(VoteRequestDto.class, (request, data) -> onVoteRequestDto(request))
-                        .event(CommandRequestDto.class, (command, data) -> {
-                            logger.info(getSelf().hashCode() + " received command: " + command.getCommand());
+                        .event(CommandRequestDto.class, (commandRequest, data) -> {
+                            logger.info(getSelf().hashCode() + " received command: " + commandRequest);
                             final com.gregbarasch.raftconsensus.model.LogEntry logEntry = new com.gregbarasch.raftconsensus.model.LogEntry(
-                                    command.getCommand(),
-                                    stateData().getLog().size(),
-                                    stateData().getTerm());
-                            stateData().getLog().putEntries(Collections.singletonList(logEntry));
+                                    new Command(commandRequest.getAmount(), commandRequest.getRequestId()),
+                                    persistentActorData.getLog().size(),
+                                    persistentActorData.getTerm());
+                            persistentActorData.getLog().putEntries(Collections.singletonList(logEntry));
                             return stay();
                         })
                         .build()
         );
 
-        whenUnhandled(new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.PersistentData>()
+        whenUnhandled(new FSMStateFunctionBuilder<RaftStateMachine.State, RaftStateMachine.StateData>()
                 .event(CommandRequestDto.class, (event, data) -> {
-                    // Forward commands to leader.
-                    logger.debug(getSelf().hashCode() + " forwarding event to leader.");
-                    RaftActorManager.INSTANCE.getLeader().tell(event, getSender());
+                    // Reroute
+                    getSender().tell(new CommandResponseDto(leader), getSelf()); // FIXME
                     return stay();
                 })
                 .anyEvent((event, data) -> {
@@ -108,21 +125,22 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
                         .build()
         );
 
-        startWith(FOLLOWER, new RaftStateMachine.PersistentData(getId()));
+        persistentActorData = new PersistentActorData(getId());
+        startWith(FOLLOWER, new RaftStateMachine.StateData(getId()));
         startTimeout(Timeout.ELECTION);
     }
 
     private void handleLeaderTransition() {
-        // reset leaderData
-        final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = stateData().getLog().getLastEntry();
+        // reset volatileLeaderData
+        final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = persistentActorData.getLog().getLastEntry();
         if (lastLogEntry == null) {
-            leaderData = new VolatileLeaderData(-1);
+            volatileLeaderData = new VolatileLeaderData(-1);
         } else {
-            leaderData = new VolatileLeaderData(lastLogEntry.getIndex());
+            volatileLeaderData = new VolatileLeaderData(lastLogEntry.getIndex());
         }
 
         // Register self with system as leader
-        RaftActorManager.INSTANCE.setLeader(getSelf());
+        leader = getSelf();
         logger.info(getSelf().hashCode() + " has become the leader");
 
         // kick off heartbeat
@@ -137,18 +155,18 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
             if (actor.equals(getSelf())) continue; // skip self
 
             // if were within bounds
-            final int actorNextIndex = leaderData.getNextIndex(actor);
-            if (actorNextIndex <= stateData().getLog().size()) {
+            final int actorNextIndex = volatileLeaderData.getNextIndex(actor);
+            if (actorNextIndex <= persistentActorData.getLog().size()) {
 
                 // set some values
-                final int toIndex = Math.min(stateData().getLog().size(), actorNextIndex+1); // For now we should only be sending 1 entry
+                final int toIndex = Math.min(persistentActorData.getLog().size(), actorNextIndex+1); // For now we should only be sending 1 entry
                 final int prevIndex = actorNextIndex-1;
                 long prevTerm = getTermFromLog(prevIndex);
 
                 // construct request
-                final List<com.gregbarasch.raftconsensus.model.LogEntry> logEntries = stateData().getLog().subLog(actorNextIndex, toIndex);
+                final List<com.gregbarasch.raftconsensus.model.LogEntry> logEntries = persistentActorData.getLog().subLog(actorNextIndex, toIndex);
                 final AppendEntriesRequestDto request = new AppendEntriesRequestDto(
-                        stateData().getTerm(),
+                        persistentActorData.getTerm(),
                         Math.min(toIndex-1, commitIndex),
                         prevIndex,
                         prevTerm,
@@ -163,16 +181,16 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     }
 
     private void election() {
-        stateData().nextTerm();
-        logger.info(getSelf().hashCode() + " has started an election in term " + stateData().getTerm());
+        persistentActorData.nextTerm();
+        logger.info(getSelf().hashCode() + " has started an election in term " + persistentActorData.getTerm());
 
         // vote for self
         actorsDidntVoteYesSet = new HashSet<>(RaftActorManager.INSTANCE.getActors());
         actorsDidntVoteYesSet.remove(getSelf());
-        stateData().votedFor(getSelf());
+        persistentActorData.votedFor(getSelf());
 
         // get lastLogEntry related info
-        final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = stateData().getLog().getLastEntry();
+        final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = persistentActorData.getLog().getLastEntry();
 
         Integer lastLogIndex = null;
         Long lastLogTerm = null;
@@ -182,51 +200,51 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         }
 
         // Send vote request to all servers
-        final VoteRequestDto voteRequestDto = new VoteRequestDto(stateData().getTerm(), lastLogIndex, lastLogTerm);
+        final VoteRequestDto voteRequestDto = new VoteRequestDto(persistentActorData.getTerm(), lastLogIndex, lastLogTerm);
         for (final ActorRef actor : actorsDidntVoteYesSet) {
             actor.tell(voteRequestDto, getSelf()); // TODO request vote again with a timer for actors not received?
         }
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onVoteRequestDto(VoteRequestDto voteRequestDto) {
+    private State<RaftStateMachine.State, RaftStateMachine.StateData> onVoteRequestDto(VoteRequestDto voteRequestDto) {
 
-        final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(voteRequestDto);
+        final State<RaftStateMachine.State, RaftStateMachine.StateData> nextState = syncTerm(voteRequestDto);
 
         // Only vote yes once per term
         boolean vote = false;
-        if (stateData().votedFor() == null) {
+        if (persistentActorData.votedFor() == null) {
 
-            final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = stateData().getLog().getLastEntry();
+            final com.gregbarasch.raftconsensus.model.LogEntry lastLogEntry = persistentActorData.getLog().getLastEntry();
             final Integer requestLogIndex = voteRequestDto.getLogIndex();
             final Long requestLogTerm = voteRequestDto.getLogTerm();
 
             // If everything is unset, we can grant a vote
             if ((lastLogEntry == null && requestLogIndex == null && requestLogTerm == null)) {
                 resetTimeout(Timeout.ELECTION);
-                stateData().votedFor(getSender());
+                persistentActorData.votedFor(getSender());
                 vote = true;
             } else {
                 // Otherwise, only vote for nodes whose logs are up to date
                 if (lastLogEntry != null
                         && requestLogIndex.compareTo(lastLogEntry.getIndex()) >= 0
                         && requestLogTerm.compareTo(lastLogEntry.getTerm()) >= 0) {
-                    stateData().votedFor(getSender());
+                    persistentActorData.votedFor(getSender());
                     vote = true;
                 }
             }
         }
 
         // persist and send response
-        stateData().persistToDisk();
-        VoteResponseDto voteResponseDto = new VoteResponseDto(stateData().getTerm(), voteRequestDto.getTerm(), vote);
+        persistentActorData.persistToDisk();
+        VoteResponseDto voteResponseDto = new VoteResponseDto(persistentActorData.getTerm(), voteRequestDto.getTerm(), vote);
         getSender().tell(voteResponseDto, getSelf());
 
         return nextState;
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onVoteResponseDto(VoteResponseDto voteResponseDto) {
+    private State<RaftStateMachine.State, RaftStateMachine.StateData> onVoteResponseDto(VoteResponseDto voteResponseDto) {
 
-        State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(voteResponseDto);
+        State<RaftStateMachine.State, RaftStateMachine.StateData> nextState = syncTerm(voteResponseDto);
 
         // Remove
         if (voteResponseDto.isYes()) {
@@ -241,33 +259,34 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         return nextState;
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onAppendEntriesRequestDto(AppendEntriesRequestDto request) {
+    private State<RaftStateMachine.State, RaftStateMachine.StateData> onAppendEntriesRequestDto(AppendEntriesRequestDto request) {
 
-        final long termPreUpdate = stateData().getTerm();
-        final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(request);
+        leader = getSender();
+        final long termPreUpdate = persistentActorData.getTerm();
+        final State<RaftStateMachine.State, RaftStateMachine.StateData> nextState = syncTerm(request);
 
         boolean success = false;
         int matchIndex = -1;
 
         // Fail fast if our terms are out of sync
-        if (termPreUpdate == stateData().getTerm()) {
+        if (termPreUpdate == persistentActorData.getTerm()) {
 
-            if (request.getTerm() >= stateData().getTerm()) {
+            if (request.getTerm() >= persistentActorData.getTerm()) {
                 resetTimeout(Timeout.ELECTION);
 
                 // Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
                 final long prevTerm = getTermFromLog(request.getPrevLogIndex());
                 if (request.getPrevLogIndex() == -1
-                        || (request.getPrevLogIndex() < stateData().getLog().size()
+                        || (request.getPrevLogIndex() < persistentActorData.getLog().size()
                         && prevTerm == request.getPrevLogTerm())) {
 
                     // append entries on success
                     if (request.getEntries().size() > 0) {
-                        stateData().getLog().putEntries(request.getEntries());
+                        persistentActorData.getLog().putEntries(request.getEntries());
                     }
 
                     success = true;
-                    matchIndex = stateData().getLog().size() - 1;
+                    matchIndex = persistentActorData.getLog().size() - 1;
 
                     // update commit
                     final int prevCommitIndex = commitIndex;
@@ -280,46 +299,52 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
         }
 
         // persist to disk and send response
-        stateData().persistToDisk();
-        final AppendEntriesResponseDto response = new AppendEntriesResponseDto(stateData().getTerm(), request.getTerm(), success, matchIndex);
+        persistentActorData.persistToDisk();
+        final AppendEntriesResponseDto response = new AppendEntriesResponseDto(persistentActorData.getTerm(), request.getTerm(), success, matchIndex);
         getSender().tell(response, getSelf());
         return nextState;
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> onAppendEntriesResponseDto(AppendEntriesResponseDto response) {
+    private State<RaftStateMachine.State, RaftStateMachine.StateData> onAppendEntriesResponseDto(AppendEntriesResponseDto response) {
 
-        final long termPreUpdate = stateData().getTerm();
-        final State<RaftStateMachine.State, RaftStateMachine.PersistentData> nextState = syncTerm(response);
+        final long termPreUpdate = persistentActorData.getTerm();
+        final State<RaftStateMachine.State, RaftStateMachine.StateData> nextState = syncTerm(response);
 
-        if (stateData().getTerm() == response.getTerm()) {
+        if (persistentActorData.getTerm() == response.getTerm()) {
             if (response.isSuccess()) {
-                leaderData.setMatchIndex(getSender(), response.getMatchIndex());
-                leaderData.setNextIndex(getSender(), response.getMatchIndex()+1);
+                volatileLeaderData.setMatchIndex(getSender(), response.getMatchIndex());
+                volatileLeaderData.setNextIndex(getSender(), response.getMatchIndex()+1);
 
-                // only commits 1 at a time for now
                 long newlyCommittedCount = RaftActorManager.INSTANCE.getActors().stream()
-                        .filter(actor -> leaderData.getMatchIndex(actor) > commitIndex)
+                        .filter(actor -> volatileLeaderData.getMatchIndex(actor) > commitIndex)
                         .count();
 
-                if (newlyCommittedCount > RaftActorManager.INSTANCE.getActors().size()/2.0) {
+                // Commit everything new...
+                while (newlyCommittedCount > RaftActorManager.INSTANCE.getActors().size()/2.0) {
+                    // TODO execute command and respond to client
                     commitIndex++;
-                    // TODO execute command
                     logger.info(getSelf().hashCode() + " leader commit has increased to " + commitIndex);
+
+                    newlyCommittedCount = RaftActorManager.INSTANCE.getActors().stream()
+                            .filter(actor -> volatileLeaderData.getMatchIndex(actor) > commitIndex)
+                            .count();
                 }
-            } else if (termPreUpdate == stateData().getTerm()) {
+
+
+            } else if (termPreUpdate == persistentActorData.getTerm()) {
                 // term check avoids race condition for setting nextIndex on immediate re-election
-                leaderData.setNextIndex(getSender(), leaderData.getNextIndex(getSender())-1);
+                volatileLeaderData.setNextIndex(getSender(), volatileLeaderData.getNextIndex(getSender())-1);
             }
         }
 
         return nextState;
     }
 
-    private State<RaftStateMachine.State, RaftStateMachine.PersistentData> syncTerm(RaftMessage message) {
+    private State<RaftStateMachine.State, RaftStateMachine.StateData> syncTerm(RaftMessage message) {
         // check if we are out of sync
         final long sendersTerm = message.getTerm();
-        if (sendersTerm > stateData().getTerm()) {
-            stateData().newTerm(sendersTerm);
+        if (sendersTerm > persistentActorData.getTerm()) {
+            persistentActorData.newTerm(sendersTerm);
 
             // fail to follower if were not one already
             if (stateName() != FOLLOWER) return goTo(FOLLOWER);
@@ -328,7 +353,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     }
 
     private long getTermFromLog(int index) {
-        final Log log = stateData().getLog();
+        final Log log = persistentActorData.getLog();
         if (index < 0 || index >= log.size()) {
             return 0;
         }
@@ -336,7 +361,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Per
     }
 
     private boolean termConfusion(RaftResponseMessage response) {
-        return response.getOriginalRequestTerm() != stateData().getTerm();
+        return response.getOriginalRequestTerm() != persistentActorData.getTerm();
     }
 
     private int getId() {

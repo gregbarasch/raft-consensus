@@ -23,7 +23,7 @@ public class Log implements Serializable {
 
         // We are going to make sure each entry matches
         for (final LogEntry entry : entries) {
-            entryIndex = entry.getIndex();
+            entryIndex = entry.getIndex(); // FIXME off by 1?
 
             // if our index is in bounds and our log doesnt match, break early
             if (entryIndex < log.size() && !log.get(entryIndex).equals(entry)) {

@@ -7,16 +7,16 @@ public class LogEntry implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    private final String command;
+    private final Command command;
     private final int index;
     private final long term;
 
-    public LogEntry(String command, int index, long term) {
+    public LogEntry(Command command, int index, long term) {
         this.command = command;
         this.index = index;
         this.term = term;
     }
-    public String getCommand() {
+    public Command getCommand() {
         return command;
     }
 

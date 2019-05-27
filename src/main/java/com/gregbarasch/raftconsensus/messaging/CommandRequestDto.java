@@ -1,23 +1,21 @@
 package com.gregbarasch.raftconsensus.messaging;
 
-import java.time.LocalDateTime;
-
 public class CommandRequestDto {
 
-    private final String command;
-    private final String commandId; // FIXME will need to make sure that command is unique and not re-run
+    // command type baked into the raft implementation // FIXME
+    private final int amount;
+    private final String requestId;
 
-    public CommandRequestDto(String command) {
-        this.command = command;
-        this.commandId = LocalDateTime.now().toString() + command.hashCode();
+    public CommandRequestDto(int amount, String requestId) {
+        this.amount = amount;
+        this.requestId = requestId;
     }
 
-
-    public String getCommand() {
-        return command;
+    public int getAmount() {
+        return amount;
     }
 
-    public String getCommandId() {
-        return commandId;
+    public String getRequestId() {
+        return requestId;
     }
 }

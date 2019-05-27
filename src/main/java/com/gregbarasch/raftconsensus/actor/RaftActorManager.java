@@ -4,7 +4,6 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Terminated;
 import akka.pattern.Patterns;
-import com.gregbarasch.raftconsensus.messaging.CommandRequestDto;
 import org.apache.log4j.Logger;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
@@ -23,9 +22,7 @@ public enum RaftActorManager {
 
     private static final Logger logger = Logger.getLogger(RaftActorManager.class);
 
-    private static final int NUM_INSTANCES = 8;
-
-    private static ActorRef leader = null;
+    private static final int NUM_INSTANCES = 5;
 
     private static final ActorSystem actorSystem = ActorSystem.create();
     private static LinkedList<ActorRef> actors = new LinkedList<>();
@@ -56,22 +53,5 @@ public enum RaftActorManager {
         // stop the system
         final Future<Terminated> terminate = actorSystem.terminate();
         Await.ready(terminate, scala.concurrent.duration.Duration.fromNanos(timeout.toNanos()));
-    }
-
-    public void setLeader(ActorRef actor) {
-        leader = actor;
-    }
-
-    public ActorRef getLeader() {
-        return leader;
-    }
-
-    public void sendCommand(String command) {
-        if (leader == null) {
-            logger.warn("Startup has not completed yet. The command: " + command + " could not be processed.");
-        } else {
-            CommandRequestDto commandRequestDto = new CommandRequestDto(command);
-            leader.tell(commandRequestDto, null); // TODO ask for response
-        }
     }
 }
