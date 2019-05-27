@@ -20,12 +20,9 @@ public class RaftStateMachine {
 
         private static final Logger logger = Logger.getLogger(StateData.class);
         private static final String STATE_MACHINE_FOLDER_NAME = "state_machine";
+        private static final String STATE_MACHINE_FILE_PATH = STATE_MACHINE_FOLDER_NAME + File.separator + "state_machine";
 
-        private final int id;
-
-        public StateData(int id) {
-            this.id = id;
-        }
+        public StateData() {}
 
         public void apply(LogEntry entry) {
             persistToDisk(entry.getCommand().getCommand());
@@ -38,11 +35,10 @@ public class RaftStateMachine {
             new File(STATE_MACHINE_FOLDER_NAME).mkdir();
 
             // create file and write to it
-            final String pathToFile = STATE_MACHINE_FOLDER_NAME + File.separator + id;
-            try (PrintWriter out = new PrintWriter(new FileOutputStream(pathToFile, true))) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(STATE_MACHINE_FILE_PATH, true))) {
                 out.println(command);
             } catch (IOException e) {
-                logger.error("Unable to write object to path: " + pathToFile, e);
+                logger.error("Unable to write object to path: " + STATE_MACHINE_FILE_PATH, e);
             }
         }
     }

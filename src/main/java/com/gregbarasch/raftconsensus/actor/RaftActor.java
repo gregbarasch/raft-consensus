@@ -29,7 +29,6 @@ import java.util.Set;
 
 import static com.gregbarasch.raftconsensus.model.RaftStateMachine.State.*;
 
-// TODO commandresponsedto... On failed response retry with leader
 // TODO use commandID in commandresponse dto so client knows if its a repeat.. persist commandID in log
 
 class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.StateData> {
@@ -45,7 +44,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
     private VolatileLeaderData volatileLeaderData = null;
 
     private int commitIndex = -1;
-    private int lastApplied = -1; // TODO this is used to say which entry was last executed
+    private int lastApplied = -1;
 
     static Props props() {
         return Props.create(RaftActor.class);
@@ -125,7 +124,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
         );
 
         persistentActorData = new PersistentActorData(getId());
-        startWith(FOLLOWER, new RaftStateMachine.StateData(getId()));
+        startWith(FOLLOWER, new RaftStateMachine.StateData());
         startTimeout(Timeout.ELECTION);
     }
 
@@ -290,15 +289,10 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
                     // update commit
                     final int prevCommitIndex = commitIndex;
                     commitIndex = Math.min(matchIndex, request.getCommitIndex()); // sender should have enough info to ensure that commitIndex sent is <= receivers log.size()-1
-                    if (prevCommitIndex != commitIndex) {
-                        logger.debug(getSelf().hashCode() + " commitIndex set to: " + commitIndex);
-                    }
 
-                    // apply the commits 1 by 1
-                    for (int i = prevCommitIndex+1; i<= commitIndex; i++) {
-                        stateData().apply(persistentActorData.getLog().getEntry(i));
-                        logger.debug(getSelf().hashCode() + " applied commit #" + i);
-                        lastApplied = i;
+                    if (prevCommitIndex != commitIndex) {
+                        lastApplied = commitIndex; // leader is dedicated applier
+                        logger.debug(getSelf().hashCode() + " commitIndex set to: " + commitIndex);
                     }
                 }
             }
@@ -318,8 +312,12 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
 
         if (persistentActorData.getTerm() == response.getTerm()) {
             if (response.isSuccess()) {
+
                 volatileLeaderData.setMatchIndex(getSender(), response.getMatchIndex());
                 volatileLeaderData.setNextIndex(getSender(), response.getMatchIndex()+1);
+
+                // catch up our "lastApplied"
+                syncAndApplyEntries();
 
                 long newlyCommittedCount = RaftActorManager.INSTANCE.getActors().stream()
                         .filter(actor -> volatileLeaderData.getMatchIndex(actor) > commitIndex)
@@ -334,7 +332,7 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
 
                     // apply
                     final com.gregbarasch.raftconsensus.model.LogEntry logEntry = persistentActorData.getLog().getEntry(commitIndex);
-                    stateData().apply(persistentActorData.getLog().getEntry(commitIndex));
+                    stateData().apply(logEntry);
                     logger.debug(getSelf().hashCode() + " applied commit #" + commitIndex);
                     lastApplied = commitIndex;
 
@@ -367,6 +365,19 @@ class RaftActor extends AbstractFSM<RaftStateMachine.State, RaftStateMachine.Sta
             if (stateName() != FOLLOWER) return goTo(FOLLOWER);
         }
         return stay();
+    }
+
+    private void syncAndApplyEntries() {
+        while (commitIndex > lastApplied) {
+            // apply
+            final com.gregbarasch.raftconsensus.model.LogEntry logEntry = persistentActorData.getLog().getEntry(lastApplied+1);
+            stateData().apply(logEntry);
+            logger.debug(getSelf().hashCode() + " applied commit #" + commitIndex);
+            lastApplied++;
+
+            // reply back to sender
+            logEntry.getCommand().getRequestor().tell(new CommandResponseDto(getSelf()), getSelf());
+        }
     }
 
     private long getTermFromLog(int index) {
